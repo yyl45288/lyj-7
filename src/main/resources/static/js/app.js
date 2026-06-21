@@ -407,16 +407,22 @@ async function cancelOrder(id) {
     );
 }
 
-function showCreateOrderModal() {
-    loadSkuList();
+async function showCreateOrderModal() {
+    document.getElementById('order-modal').style.display = 'flex';
     document.getElementById('order-customer').value = '';
     document.getElementById('order-address').value = '';
     document.getElementById('order-phone').value = '';
     document.getElementById('order-urgent').checked = false;
     document.getElementById('order-remark').value = '';
     document.getElementById('order-items-container').innerHTML = '';
+
+    await loadSkuList();
+
+    if (allSkuList.length === 0) {
+        showToast('商品列表加载失败，请刷新页面重试', 'error');
+    }
+
     addOrderItem();
-    document.getElementById('order-modal').style.display = 'flex';
 }
 
 function closeOrderModal() {
@@ -426,6 +432,9 @@ function closeOrderModal() {
 async function loadSkuList() {
     if (allSkuList.length > 0) return;
     allSkuList = await apiGet('/skus') || [];
+    if (allSkuList.length === 0) {
+        console.warn('SKU列表加载为空，可能是接口异常');
+    }
 }
 
 function addOrderItem() {
