@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仓储波次拣货系统</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="logo">
+                <h2>📦 波次拣货系统</h2>
+            </div>
+            <nav class="nav-menu">
+                <a href="/" class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span>可视化面板</span>
+                </a>
+                <a href="/orders" class="nav-item" data-page="orders">
+                    <span class="nav-icon">📋</span>
+                    <span>订单管理</span>
+                </a>
+                <a href="/inventory" class="nav-item" data-page="inventory">
+                    <span class="nav-icon">📦</span>
+                    <span>库存管理</span>
+                </a>
+                <a href="/waves" class="nav-item" data-page="waves">
+                    <span class="nav-icon">🌊</span>
+                    <span>波次管理</span>
+                </a>
+                <a href="/picking" class="nav-item" data-page="picking">
+                    <span class="nav-icon">🛒</span>
+                    <span>拣货任务</span>
+                </a>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="header">
+                <h1 id="page-title">可视化面板</h1>
+                <div class="header-actions">
+                    <span class="refresh-btn" onclick="refreshData()">🔄 刷新</span>
+                    <span id="last-update"></span>
+                </div>
+            </header>
+
+            <div id="content" class="content">
+            </div>
+        </main>
+    </div>
+
+    <script src="/js/app.js"></script>
+    <script>
+        const currentPage = window.location.pathname === '/' ? 'dashboard' :
+            window.location.pathname.replace('/', '');
+        loadPage(currentPage);
+
+        function loadPage(page) {
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+                if (item.dataset.page === page) {
+                    item.classList.add('active');
+                }
+            });
+
+            const titles = {
+                'dashboard': '可视化面板',
+                'orders': '订单管理',
+                'inventory': '库存管理',
+                'waves': '波次管理',
+                'picking': '拣货任务'
+            };
+            document.getElementById('page-title').textContent = titles[page] || '可视化面板';
+
+            if (page === 'dashboard') {
+                loadDashboard();
+            } else if (page === 'orders') {
+                loadOrders();
+            } else if (page === 'inventory') {
+                loadInventory();
+            } else if (page === 'waves') {
+                loadWaves();
+            } else if (page === 'picking') {
+                loadPickingTasks();
+            }
+        }
+
+        function refreshData() {
+            loadPage(currentPage);
+        }
+
+        setInterval(() => {
+            if (currentPage === 'dashboard') {
+                loadDashboard();
+            }
+        }, 10000);
+    </script>
+</body>
+</html>
