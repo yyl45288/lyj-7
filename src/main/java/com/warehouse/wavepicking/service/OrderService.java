@@ -65,6 +65,27 @@ public class OrderService {
 
     @Transactional
     public OrderResponse createOrder(CreateOrderRequest request) {
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new BusinessException("INVALID_ORDER_ITEMS", "订单项不能为空");
+        }
+
+        int rowIndex = 1;
+        for (CreateOrderRequest.OrderItemRequest itemRequest : request.getItems()) {
+            if (itemRequest.getSkuId() == null) {
+                throw new BusinessException("INVALID_ORDER_ITEMS",
+                        String.format("第 %d 行：SKU不能为空", rowIndex));
+            }
+            if (itemRequest.getQuantity() == null) {
+                throw new BusinessException("INVALID_ORDER_ITEMS",
+                        String.format("第 %d 行：数量不能为空", rowIndex));
+            }
+            if (itemRequest.getQuantity() <= 0) {
+                throw new BusinessException("INVALID_ORDER_ITEMS",
+                        String.format("第 %d 行：数量必须大于0", rowIndex));
+            }
+            rowIndex++;
+        }
+
         String orderNo = generateOrderNo();
 
         Order order = new Order();
@@ -76,9 +97,12 @@ public class OrderService {
         order.setRemark(request.getRemark());
         order.setStatus(Order.OrderStatus.PENDING);
 
+        rowIndex = 1;
         for (CreateOrderRequest.OrderItemRequest itemRequest : request.getItems()) {
+            final int currentRow = rowIndex;
             Sku sku = skuRepository.findById(itemRequest.getSkuId())
-                    .orElseThrow(() -> new BusinessException("SKU_NOT_FOUND", "SKU不存在: " + itemRequest.getSkuId()));
+                    .orElseThrow(() -> new BusinessException("SKU_NOT_FOUND",
+                            String.format("第 %d 行：SKU不存在: %s", currentRow, itemRequest.getSkuId())));
 
             OrderItem item = new OrderItem();
             item.setOrder(order);
@@ -87,6 +111,7 @@ public class OrderService {
             item.setPickedQuantity(0);
             item.setLocation(sku.getLocation());
             order.getItems().add(item);
+            rowIndex++;
         }
 
         Order saved = orderRepository.save(order);

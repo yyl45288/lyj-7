@@ -430,12 +430,14 @@ async function loadSkuList() {
 
 function addOrderItem() {
     const container = document.getElementById('order-items-container');
+    const rowIndex = container.children.length + 1;
     const options = allSkuList.map(s =>
         `<option value="${s.id}">${s.skuCode} - ${s.skuName}</option>`
     ).join('');
 
     const row = document.createElement('div');
     row.className = 'order-item-row';
+    row.dataset.index = rowIndex;
     row.innerHTML = `
         <select style="flex:2;">
             <option value="">请选择商品</option>
@@ -451,6 +453,10 @@ function removeOrderItem(btn) {
     const container = document.getElementById('order-items-container');
     if (container.children.length > 1) {
         btn.parentElement.remove();
+        let index = 1;
+        container.querySelectorAll('.order-item-row').forEach(row => {
+            row.dataset.index = index++;
+        });
     } else {
         showToast('至少需要一个商品', 'error');
     }
@@ -466,12 +472,31 @@ async function createOrder() {
     const items = [];
     const rows = document.querySelectorAll('#order-items-container .order-item-row');
     for (const row of rows) {
+        const rowIndex = row.dataset.index;
         const skuId = row.querySelector('select').value;
-        const qty = parseInt(row.querySelector('input').value);
-        if (!skuId || !qty || qty <= 0) {
-            showToast('请填写完整的商品信息', 'error');
+        const qtyInput = row.querySelector('input').value;
+        const qty = parseInt(qtyInput);
+
+        if (!skuId) {
+            showToast(`第 ${rowIndex} 行：请选择商品`, 'error');
             return;
         }
+
+        if (!qtyInput || qtyInput.trim() === '') {
+            showToast(`第 ${rowIndex} 行：请填写商品数量`, 'error');
+            return;
+        }
+
+        if (isNaN(qty)) {
+            showToast(`第 ${rowIndex} 行：商品数量格式不正确`, 'error');
+            return;
+        }
+
+        if (qty <= 0) {
+            showToast(`第 ${rowIndex} 行：商品数量必须大于 0`, 'error');
+            return;
+        }
+
         items.push({ skuId: parseInt(skuId), quantity: qty });
     }
 

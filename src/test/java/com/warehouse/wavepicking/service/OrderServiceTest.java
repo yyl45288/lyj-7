@@ -458,4 +458,200 @@ class OrderServiceTest {
 
         verify(orderRepository, times(6)).save(testOrder);
     }
+
+    @Test
+    @DisplayName("创建订单 - 订单项为空")
+    void testCreateOrder_EmptyItems() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+        request.setItems(new ArrayList<>());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INVALID_ORDER_ITEMS", exception.getCode());
+        assertEquals("订单项不能为空", exception.getMessage());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - 订单项为null")
+    void testCreateOrder_NullItems() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+        request.setItems(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INVALID_ORDER_ITEMS", exception.getCode());
+        assertEquals("订单项不能为空", exception.getMessage());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - SKU ID为空 - 第1行")
+    void testCreateOrder_SkuIdNull_Row1() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest item = new CreateOrderRequest.OrderItemRequest();
+        item.setSkuId(null);
+        item.setQuantity(5);
+        request.setItems(List.of(item));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INVALID_ORDER_ITEMS", exception.getCode());
+        assertTrue(exception.getMessage().contains("第 1 行"));
+        assertTrue(exception.getMessage().contains("SKU不能为空"));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - SKU ID为空 - 第2行")
+    void testCreateOrder_SkuIdNull_Row2() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest item1 = new CreateOrderRequest.OrderItemRequest();
+        item1.setSkuId(1L);
+        item1.setQuantity(5);
+
+        CreateOrderRequest.OrderItemRequest item2 = new CreateOrderRequest.OrderItemRequest();
+        item2.setSkuId(null);
+        item2.setQuantity(3);
+
+        request.setItems(List.of(item1, item2));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INVALID_ORDER_ITEMS", exception.getCode());
+        assertTrue(exception.getMessage().contains("第 2 行"));
+        assertTrue(exception.getMessage().contains("SKU不能为空"));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - 数量为空")
+    void testCreateOrder_QuantityNull() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest item = new CreateOrderRequest.OrderItemRequest();
+        item.setSkuId(1L);
+        item.setQuantity(null);
+        request.setItems(List.of(item));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INVALID_ORDER_ITEMS", exception.getCode());
+        assertTrue(exception.getMessage().contains("第 1 行"));
+        assertTrue(exception.getMessage().contains("数量不能为空"));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - 数量为0")
+    void testCreateOrder_QuantityZero() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest item = new CreateOrderRequest.OrderItemRequest();
+        item.setSkuId(1L);
+        item.setQuantity(0);
+        request.setItems(List.of(item));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INVALID_ORDER_ITEMS", exception.getCode());
+        assertTrue(exception.getMessage().contains("第 1 行"));
+        assertTrue(exception.getMessage().contains("数量必须大于0"));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - 数量为负数")
+    void testCreateOrder_QuantityNegative() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest item = new CreateOrderRequest.OrderItemRequest();
+        item.setSkuId(1L);
+        item.setQuantity(-5);
+        request.setItems(List.of(item));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INVALID_ORDER_ITEMS", exception.getCode());
+        assertTrue(exception.getMessage().contains("第 1 行"));
+        assertTrue(exception.getMessage().contains("数量必须大于0"));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - SKU不存在时提示行号")
+    void testCreateOrder_SkuNotFound_WithRowNumber() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest item1 = new CreateOrderRequest.OrderItemRequest();
+        item1.setSkuId(1L);
+        item1.setQuantity(5);
+
+        CreateOrderRequest.OrderItemRequest item2 = new CreateOrderRequest.OrderItemRequest();
+        item2.setSkuId(999L);
+        item2.setQuantity(3);
+
+        request.setItems(List.of(item1, item2));
+
+        when(skuRepository.findById(1L)).thenReturn(Optional.of(testSku1));
+        when(skuRepository.findById(999L)).thenReturn(Optional.empty());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("SKU_NOT_FOUND", exception.getCode());
+        assertTrue(exception.getMessage().contains("第 2 行"));
+        assertTrue(exception.getMessage().contains("999"));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - 多个订单项全部校验通过")
+    void testCreateOrder_MultipleItems_Success() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest item1 = new CreateOrderRequest.OrderItemRequest();
+        item1.setSkuId(1L);
+        item1.setQuantity(5);
+
+        CreateOrderRequest.OrderItemRequest item2 = new CreateOrderRequest.OrderItemRequest();
+        item2.setSkuId(2L);
+        item2.setQuantity(10);
+
+        request.setItems(List.of(item1, item2));
+
+        when(skuRepository.findById(1L)).thenReturn(Optional.of(testSku1));
+        when(skuRepository.findById(2L)).thenReturn(Optional.of(testSku2));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+            Order saved = invocation.getArgument(0);
+            saved.setId(2L);
+            saved.setCreatedAt(LocalDateTime.now());
+            saved.setUpdatedAt(LocalDateTime.now());
+            return saved;
+        });
+
+        OrderResponse result = orderService.createOrder(request);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.PENDING.name(), result.getStatus());
+        verify(orderRepository).save(any(Order.class));
+    }
 }
