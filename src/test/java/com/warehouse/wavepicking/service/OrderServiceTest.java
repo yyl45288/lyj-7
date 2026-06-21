@@ -239,4 +239,223 @@ class OrderServiceTest {
         assertEquals(1, result.size());
         verify(orderRepository).findPendingOrdersWithoutWave(Order.OrderStatus.CONFIRMED);
     }
+
+    @Test
+    @DisplayName("更新订单状态 - PENDING 到 CONFIRMED - 合法")
+    void testUpdateStatus_PendingToConfirmed_Success() {
+        testOrder.setStatus(Order.OrderStatus.PENDING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.updateStatus(1L, Order.OrderStatus.CONFIRMED);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.CONFIRMED, testOrder.getStatus());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - CONFIRMED 到 ALLOCATED - 合法")
+    void testUpdateStatus_ConfirmedToAllocated_Success() {
+        testOrder.setStatus(Order.OrderStatus.CONFIRMED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.updateStatus(1L, Order.OrderStatus.ALLOCATED);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.ALLOCATED, testOrder.getStatus());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - ALLOCATED 到 PICKING - 合法")
+    void testUpdateStatus_AllocatedToPicking_Success() {
+        testOrder.setStatus(Order.OrderStatus.ALLOCATED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.updateStatus(1L, Order.OrderStatus.PICKING);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.PICKING, testOrder.getStatus());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - PICKING 到 PICKED - 合法")
+    void testUpdateStatus_PickingToPicked_Success() {
+        testOrder.setStatus(Order.OrderStatus.PICKING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.updateStatus(1L, Order.OrderStatus.PICKED);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.PICKED, testOrder.getStatus());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - PICKED 到 PACKED - 合法")
+    void testUpdateStatus_PickedToPacked_Success() {
+        testOrder.setStatus(Order.OrderStatus.PICKED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.updateStatus(1L, Order.OrderStatus.PACKED);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.PACKED, testOrder.getStatus());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - PACKED 到 SHIPPED - 合法")
+    void testUpdateStatus_PackedToShipped_Success() {
+        testOrder.setStatus(Order.OrderStatus.PACKED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.updateStatus(1L, Order.OrderStatus.SHIPPED);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.SHIPPED, testOrder.getStatus());
+        assertNotNull(testOrder.getCompletedAt());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - PENDING 到 SHIPPED - 非法跳转变换")
+    void testUpdateStatus_PendingToShipped_InvalidTransition() {
+        testOrder.setStatus(Order.OrderStatus.PENDING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(1L, Order.OrderStatus.SHIPPED));
+
+        assertEquals("INVALID_STATUS_TRANSITION", exception.getCode());
+        assertTrue(exception.getMessage().contains("订单状态无法从 PENDING 转换为 SHIPPED"));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - SHIPPED 不能转换任何状态")
+    void testUpdateStatus_ShippedCannotTransition_Invalid() {
+        testOrder.setStatus(Order.OrderStatus.SHIPPED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(1L, Order.OrderStatus.PENDING));
+
+        assertEquals("INVALID_STATUS_TRANSITION", exception.getCode());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - CANCELLED 不能转换任何状态")
+    void testUpdateStatus_CancelledCannotTransition_Invalid() {
+        testOrder.setStatus(Order.OrderStatus.CANCELLED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(1L, Order.OrderStatus.PENDING));
+
+        assertEquals("INVALID_STATUS_TRANSITION", exception.getCode());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - ALLOCATED 回退到 CONFIRMED - 合法回退")
+    void testUpdateStatus_AllocatedToConfirmed_Success() {
+        testOrder.setStatus(Order.OrderStatus.ALLOCATED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.updateStatus(1L, Order.OrderStatus.CONFIRMED);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.CONFIRMED, testOrder.getStatus());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - PICKING 不能直接到 PACKED - 非法跳转变换")
+    void testUpdateStatus_PickingToPacked_Invalid() {
+        testOrder.setStatus(Order.OrderStatus.PICKING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(1L, Order.OrderStatus.PACKED));
+
+        assertEquals("INVALID_STATUS_TRANSITION", exception.getCode());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("更新订单状态 - 订单不存在")
+    void testUpdateStatus_OrderNotFound() {
+        when(orderRepository.findById(999L)).thenReturn(Optional.empty());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.updateStatus(999L, Order.OrderStatus.CONFIRMED));
+
+        assertEquals("ORDER_NOT_FOUND", exception.getCode());
+    }
+
+    @Test
+    @DisplayName("取消订单 - PENDING 状态可以取消")
+    void testCancelOrder_PendingStatus_Success() {
+        testOrder.setStatus(Order.OrderStatus.PENDING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.cancelOrder(1L);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.CANCELLED, testOrder.getStatus());
+        verify(orderRepository).save(testOrder);
+    }
+
+    @Test
+    @DisplayName("取消订单 - PICKING 状态不能取消")
+    void testCancelOrder_PickingStatus_Invalid() {
+        testOrder.setStatus(Order.OrderStatus.PICKING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.cancelOrder(1L));
+
+        assertEquals("CANNOT_CANCEL", exception.getCode());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("完整状态流转链路 - 从创建到发货")
+    void testFullStatusFlow_Success() {
+        testOrder.setStatus(Order.OrderStatus.PENDING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        orderService.updateStatus(1L, Order.OrderStatus.CONFIRMED);
+        assertEquals(Order.OrderStatus.CONFIRMED, testOrder.getStatus());
+
+        orderService.updateStatus(1L, Order.OrderStatus.ALLOCATED);
+        assertEquals(Order.OrderStatus.ALLOCATED, testOrder.getStatus());
+
+        orderService.updateStatus(1L, Order.OrderStatus.PICKING);
+        assertEquals(Order.OrderStatus.PICKING, testOrder.getStatus());
+
+        orderService.updateStatus(1L, Order.OrderStatus.PICKED);
+        assertEquals(Order.OrderStatus.PICKED, testOrder.getStatus());
+
+        orderService.updateStatus(1L, Order.OrderStatus.PACKED);
+        assertEquals(Order.OrderStatus.PACKED, testOrder.getStatus());
+
+        orderService.updateStatus(1L, Order.OrderStatus.SHIPPED);
+        assertEquals(Order.OrderStatus.SHIPPED, testOrder.getStatus());
+        assertNotNull(testOrder.getCompletedAt());
+
+        verify(orderRepository, times(6)).save(testOrder);
+    }
 }

@@ -72,7 +72,24 @@ public class Order {
         PICKED,
         PACKED,
         SHIPPED,
-        CANCELLED
+        CANCELLED;
+
+        public boolean canTransitionTo(OrderStatus targetStatus) {
+            return switch (this) {
+                case PENDING -> targetStatus == CONFIRMED || targetStatus == CANCELLED;
+                case CONFIRMED -> targetStatus == ALLOCATED || targetStatus == CANCELLED;
+                case ALLOCATED -> targetStatus == PICKING || targetStatus == CONFIRMED;
+                case PICKING -> targetStatus == PICKED;
+                case PICKED -> targetStatus == PACKED;
+                case PACKED -> targetStatus == SHIPPED;
+                case SHIPPED -> false;
+                case CANCELLED -> false;
+            };
+        }
+
+        public String getTransitionErrorMessage(OrderStatus targetStatus) {
+            return String.format("订单状态无法从 %s 转换为 %s", this.name(), targetStatus.name());
+        }
     }
 
     public Long getId() {
