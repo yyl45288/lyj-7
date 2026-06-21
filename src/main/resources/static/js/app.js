@@ -71,6 +71,57 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
+let _confirmDialogCallback = null;
+
+function showConfirmDialog(title, message, onConfirm, confirmText = '确认', cancelText = '取消') {
+    _confirmDialogCallback = onConfirm;
+
+    let dialog = document.getElementById('confirm-dialog');
+    if (!dialog) {
+        dialog = document.createElement('div');
+        dialog.id = 'confirm-dialog';
+        dialog.className = 'modal';
+        dialog.innerHTML = `
+            <div class="modal-content" style="max-width:420px;">
+                <div class="modal-header">
+                    <h3 id="confirm-dialog-title">确认操作</h3>
+                    <span class="close" onclick="closeConfirmDialog()">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <p id="confirm-dialog-message" style="color:#4a5568;font-size:14px;line-height:1.6;"></p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeConfirmDialog()" id="confirm-dialog-cancel">取消</button>
+                    <button class="btn btn-primary" onclick="executeConfirmDialog()" id="confirm-dialog-confirm">确认</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(dialog);
+    }
+
+    document.getElementById('confirm-dialog-title').textContent = title;
+    document.getElementById('confirm-dialog-message').textContent = message;
+    document.getElementById('confirm-dialog-confirm').textContent = confirmText;
+    document.getElementById('confirm-dialog-cancel').textContent = cancelText;
+    dialog.style.display = 'flex';
+}
+
+function closeConfirmDialog() {
+    const dialog = document.getElementById('confirm-dialog');
+    if (dialog) {
+        dialog.style.display = 'none';
+    }
+    _confirmDialogCallback = null;
+}
+
+function executeConfirmDialog() {
+    const callback = _confirmDialogCallback;
+    closeConfirmDialog();
+    if (typeof callback === 'function') {
+        callback();
+    }
+}
+
 function updateLastUpdateTime() {
     const el = document.getElementById('last-update');
     if (el) {
@@ -325,21 +376,35 @@ async function filterOrders() {
 }
 
 async function confirmOrder(id) {
-    if (!confirm('确认该订单吗？')) return;
-    const result = await apiPut(`/orders/${id}/confirm`);
-    if (result) {
-        showToast('订单确认成功');
-        loadOrders();
-    }
+    showConfirmDialog(
+        '确认订单',
+        '确定要确认该订单吗？确认后订单状态将变为已确认。',
+        async () => {
+            const result = await apiPut(`/orders/${id}/confirm`);
+            if (result) {
+                showToast('订单确认成功');
+                loadOrders();
+            }
+        },
+        '确认订单',
+        '取消'
+    );
 }
 
 async function cancelOrder(id) {
-    if (!confirm('确定取消该订单吗？')) return;
-    const result = await apiPut(`/orders/${id}/cancel`);
-    if (result) {
-        showToast('订单已取消');
-        loadOrders();
-    }
+    showConfirmDialog(
+        '取消订单',
+        '确定要取消该订单吗？取消后订单将无法恢复。',
+        async () => {
+            const result = await apiPut(`/orders/${id}/cancel`);
+            if (result) {
+                showToast('订单已取消');
+                loadOrders();
+            }
+        },
+        '确认取消',
+        '返回'
+    );
 }
 
 function showCreateOrderModal() {
@@ -591,30 +656,51 @@ async function createWave() {
 }
 
 async function releaseWave(id) {
-    if (!confirm('确定释放该波次吗？释放后将锁定库存并生成拣货任务。')) return;
-    const result = await apiPut(`/waves/${id}/release`);
-    if (result) {
-        showToast('波次释放成功');
-        loadWaves();
-    }
+    showConfirmDialog(
+        '释放波次',
+        '确定释放该波次吗？释放后将锁定库存并生成拣货任务。',
+        async () => {
+            const result = await apiPut(`/waves/${id}/release`);
+            if (result) {
+                showToast('波次释放成功');
+                loadWaves();
+            }
+        },
+        '确认释放',
+        '取消'
+    );
 }
 
 async function rollbackWave(id) {
-    if (!confirm('确定回滚该波次吗？回滚后将解锁库存并取消拣货任务。')) return;
-    const result = await apiPut(`/waves/${id}/rollback`);
-    if (result) {
-        showToast('波次回滚成功');
-        loadWaves();
-    }
+    showConfirmDialog(
+        '回滚波次',
+        '确定回滚该波次吗？回滚后将解锁库存并取消拣货任务。',
+        async () => {
+            const result = await apiPut(`/waves/${id}/rollback`);
+            if (result) {
+                showToast('波次回滚成功');
+                loadWaves();
+            }
+        },
+        '确认回滚',
+        '取消'
+    );
 }
 
 async function completeWave(id) {
-    if (!confirm('确定完成该波次吗？')) return;
-    const result = await apiPut(`/waves/${id}/complete`);
-    if (result) {
-        showToast('波次完成');
-        loadWaves();
-    }
+    showConfirmDialog(
+        '完成波次',
+        '确定完成该波次吗？',
+        async () => {
+            const result = await apiPut(`/waves/${id}/complete`);
+            if (result) {
+                showToast('波次完成');
+                loadWaves();
+            }
+        },
+        '确认完成',
+        '取消'
+    );
 }
 
 function viewWaveDetail(id) {
