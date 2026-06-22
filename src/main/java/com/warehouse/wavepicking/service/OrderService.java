@@ -117,13 +117,23 @@ public class OrderService implements IOrderService {
         }
 
         Order saved = orderRepository.save(order);
-        return convertToResponse(saved);
+
+        inventoryLockService.lockStockForOrder(saved);
+
+        saved.setStatus(Order.OrderStatus.CONFIRMED);
+        Order confirmed = orderRepository.save(saved);
+
+        return convertToResponse(confirmed);
     }
 
     @Transactional
     public OrderResponse confirmOrder(Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "订单不存在: " + id));
+
+        if (order.getStatus() == Order.OrderStatus.CONFIRMED) {
+            return convertToResponse(order);
+        }
 
         if (order.getStatus() != Order.OrderStatus.PENDING) {
             throw new BusinessException("INVALID_STATUS", "只有待确认订单才能确认");
@@ -173,11 +183,7 @@ public class OrderService implements IOrderService {
             throw new BusinessException("CANNOT_CANCEL", "订单已在波次中，无法取消，请先回滚波次");
         }
 
-        if (currentStatus == Order.OrderStatus.PENDING) {
-            // no inventory locked yet
-        } else {
-            inventoryLockService.releaseStockForCancelledOrder(order);
-        }
+        inventoryLockService.releaseStockForCancelledOrder(order);
 
         order.setStatus(Order.OrderStatus.CANCELLED);
         Order saved = orderRepository.save(order);

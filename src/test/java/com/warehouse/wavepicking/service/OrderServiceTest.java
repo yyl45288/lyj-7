@@ -127,7 +127,7 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("创建订单 - 成功")
+    @DisplayName("创建订单 - 成功：创建后立即锁库存并变为CONFIRMED状态")
     void testCreateOrder_Success() {
         CreateOrderRequest request = new CreateOrderRequest();
         request.setCustomerName("新客户");
@@ -148,13 +148,45 @@ class OrderServiceTest {
             saved.setUpdatedAt(LocalDateTime.now());
             return saved;
         });
+        lenient().when(inventoryLockService.lockStockForOrder(any(Order.class)))
+                .thenReturn(List.of());
 
         OrderResponse result = orderService.createOrder(request);
 
         assertNotNull(result);
         assertEquals("新客户", result.getCustomerName());
-        assertEquals(Order.OrderStatus.PENDING.name(), result.getStatus());
-        verify(orderRepository).save(any(Order.class));
+        assertEquals(Order.OrderStatus.CONFIRMED.name(), result.getStatus());
+        verify(orderRepository, times(2)).save(any(Order.class));
+        verify(inventoryLockService).lockStockForOrder(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("创建订单 - 库存不足：整体回滚，订单不残留，库存不脏数据")
+    void testCreateOrder_InsufficientStock_FullRollback() {
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setCustomerName("测试客户");
+
+        CreateOrderRequest.OrderItemRequest itemRequest = new CreateOrderRequest.OrderItemRequest();
+        itemRequest.setSkuId(1L);
+        itemRequest.setQuantity(999);
+        request.setItems(List.of(itemRequest));
+
+        when(skuRepository.findById(1L)).thenReturn(Optional.of(testSku1));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+            Order saved = invocation.getArgument(0);
+            saved.setId(99L);
+            saved.setCreatedAt(LocalDateTime.now());
+            saved.setUpdatedAt(LocalDateTime.now());
+            return saved;
+        });
+        when(inventoryLockService.lockStockForOrder(any(Order.class)))
+                .thenThrow(new BusinessException("INSUFFICIENT_STOCK", "库存不足"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createOrder(request));
+
+        assertEquals("INSUFFICIENT_STOCK", exception.getCode());
+        verify(inventoryLockService).lockStockForOrder(any(Order.class));
     }
 
     @Test
@@ -174,11 +206,13 @@ class OrderServiceTest {
                 () -> orderService.createOrder(request));
 
         assertEquals("SKU_NOT_FOUND", exception.getCode());
+        verify(inventoryLockService, never()).lockStockForOrder(any(Order.class));
     }
 
     @Test
-    @DisplayName("确认订单 - 成功")
+    @DisplayName("确认订单 - PENDING状态成功：兼容旧流程锁库存")
     void testConfirmOrder_Success() {
+        testOrder.setStatus(Order.OrderStatus.PENDING);
         when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
         when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
 
@@ -190,9 +224,23 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("确认订单 - 状态不正确")
-    void testConfirmOrder_InvalidStatus() {
+    @DisplayName("确认订单 - 已CONFIRMED状态：幂等直接返回，不重复锁库存")
+    void testConfirmOrder_AlreadyConfirmed_Idempotent() {
         testOrder.setStatus(Order.OrderStatus.CONFIRMED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+
+        OrderResponse result = orderService.confirmOrder(1L);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.CONFIRMED.name(), result.getStatus());
+        verify(inventoryLockService, never()).lockStockForOrder(any(Order.class));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("确认订单 - ALLOCATED状态不正确：抛异常")
+    void testConfirmOrder_InvalidStatus() {
+        testOrder.setStatus(Order.OrderStatus.ALLOCATED);
         when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
 
         BusinessException exception = assertThrows(BusinessException.class,
@@ -202,7 +250,7 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("取消订单 - 成功")
+    @DisplayName("取消订单 - CONFIRMED状态成功：释放库存")
     void testCancelOrder_Success() {
         testOrder.setStatus(Order.OrderStatus.CONFIRMED);
         when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
@@ -213,6 +261,21 @@ class OrderServiceTest {
         assertNotNull(result);
         assertEquals(Order.OrderStatus.CANCELLED, testOrder.getStatus());
         verify(inventoryLockService).releaseStockForCancelledOrder(testOrder);
+    }
+
+    @Test
+    @DisplayName("取消订单 - PENDING状态成功：releaseStock内部处理PENDING无操作")
+    void testCancelOrder_PendingStatus_Success() {
+        testOrder.setStatus(Order.OrderStatus.PENDING);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
+        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
+
+        OrderResponse result = orderService.cancelOrder(1L);
+
+        assertNotNull(result);
+        assertEquals(Order.OrderStatus.CANCELLED, testOrder.getStatus());
+        verify(inventoryLockService).releaseStockForCancelledOrder(testOrder);
+        verify(orderRepository).save(testOrder);
     }
 
     @Test
@@ -402,20 +465,6 @@ class OrderServiceTest {
                 () -> orderService.updateStatus(999L, Order.OrderStatus.CONFIRMED));
 
         assertEquals("ORDER_NOT_FOUND", exception.getCode());
-    }
-
-    @Test
-    @DisplayName("取消订单 - PENDING 状态可以取消")
-    void testCancelOrder_PendingStatus_Success() {
-        testOrder.setStatus(Order.OrderStatus.PENDING);
-        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
-        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
-
-        OrderResponse result = orderService.cancelOrder(1L);
-
-        assertNotNull(result);
-        assertEquals(Order.OrderStatus.CANCELLED, testOrder.getStatus());
-        verify(orderRepository).save(testOrder);
     }
 
     @Test
@@ -624,7 +673,7 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("创建订单 - 多个订单项全部校验通过")
+    @DisplayName("创建订单 - 多个订单项全部校验通过，立即锁库存变为CONFIRMED")
     void testCreateOrder_MultipleItems_Success() {
         CreateOrderRequest request = new CreateOrderRequest();
         request.setCustomerName("测试客户");
@@ -648,11 +697,14 @@ class OrderServiceTest {
             saved.setUpdatedAt(LocalDateTime.now());
             return saved;
         });
+        lenient().when(inventoryLockService.lockStockForOrder(any(Order.class)))
+                .thenReturn(List.of());
 
         OrderResponse result = orderService.createOrder(request);
 
         assertNotNull(result);
-        assertEquals(Order.OrderStatus.PENDING.name(), result.getStatus());
-        verify(orderRepository).save(any(Order.class));
+        assertEquals(Order.OrderStatus.CONFIRMED.name(), result.getStatus());
+        verify(orderRepository, times(2)).save(any(Order.class));
+        verify(inventoryLockService).lockStockForOrder(any(Order.class));
     }
 }
