@@ -4,6 +4,8 @@ import com.warehouse.wavepicking.dto.response.PickingTaskResponse;
 import com.warehouse.wavepicking.entity.*;
 import com.warehouse.wavepicking.exception.BusinessException;
 import com.warehouse.wavepicking.repository.PickingTaskRepository;
+import com.warehouse.wavepicking.statemachine.PickingTaskStateMachine;
+import com.warehouse.wavepicking.statemachine.StateTransitionResult;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -133,9 +135,8 @@ public class PickingTaskService implements IPickingTaskService {
         PickingTask task = pickingTaskRepository.findById(taskId)
                 .orElseThrow(() -> new BusinessException("TASK_NOT_FOUND", "拣货任务不存在: " + taskId));
 
-        if (task.getStatus() != PickingTask.TaskStatus.PENDING) {
-            throw new BusinessException("INVALID_STATUS", "只有待分配的任务才能分配拣货员");
-        }
+        StateTransitionResult result = PickingTaskStateMachine.canAssign(task.getStatus());
+        throwIfNotAllowed(result);
 
         task.setPicker(picker);
         task.setStatus(PickingTask.TaskStatus.ASSIGNED);
@@ -149,9 +150,8 @@ public class PickingTaskService implements IPickingTaskService {
         PickingTask task = pickingTaskRepository.findById(taskId)
                 .orElseThrow(() -> new BusinessException("TASK_NOT_FOUND", "拣货任务不存在: " + taskId));
 
-        if (task.getStatus() != PickingTask.TaskStatus.ASSIGNED) {
-            throw new BusinessException("INVALID_STATUS", "只有已分配的任务才能开始拣货");
-        }
+        StateTransitionResult result = PickingTaskStateMachine.canStart(task.getStatus());
+        throwIfNotAllowed(result);
 
         task.setStatus(PickingTask.TaskStatus.PICKING);
         task.setStartedAt(LocalDateTime.now());
@@ -165,17 +165,9 @@ public class PickingTaskService implements IPickingTaskService {
         PickingTask task = pickingTaskRepository.findById(taskId)
                 .orElseThrow(() -> new BusinessException("TASK_NOT_FOUND", "拣货任务不存在: " + taskId));
 
-        if (task.getStatus() != PickingTask.TaskStatus.PICKING && task.getStatus() != PickingTask.TaskStatus.ASSIGNED) {
-            throw new BusinessException("INVALID_STATUS", "任务状态不正确，无法完成");
-        }
-
-        if (pickedQuantity == null || pickedQuantity < 0) {
-            throw new BusinessException("INVALID_QUANTITY", "拣货数量无效");
-        }
-
-        if (pickedQuantity > task.getQuantity()) {
-            throw new BusinessException("EXCEED_QUANTITY", "拣货数量不能超过任务数量");
-        }
+        StateTransitionResult result = PickingTaskStateMachine.canComplete(
+                task.getStatus(), pickedQuantity, task.getQuantity());
+        throwIfNotAllowed(result);
 
         task.setPickedQuantity(pickedQuantity);
         task.setStatus(PickingTask.TaskStatus.COMPLETED);
@@ -196,10 +188,16 @@ public class PickingTaskService implements IPickingTaskService {
     public void cancelTasksByWave(Long waveId) {
         List<PickingTask> tasks = pickingTaskRepository.findByWaveId(waveId);
         for (PickingTask task : tasks) {
-            if (task.getStatus() != PickingTask.TaskStatus.COMPLETED) {
+            if (PickingTaskStateMachine.canCancel(task.getStatus())) {
                 task.setStatus(PickingTask.TaskStatus.CANCELLED);
                 pickingTaskRepository.save(task);
             }
+        }
+    }
+
+    private void throwIfNotAllowed(StateTransitionResult result) {
+        if (!result.isAllowed()) {
+            throw new BusinessException(result.getErrorCode(), result.getErrorMessage());
         }
     }
 

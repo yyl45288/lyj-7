@@ -9,6 +9,8 @@ import com.warehouse.wavepicking.exception.BusinessException;
 import com.warehouse.wavepicking.repository.OrderItemRepository;
 import com.warehouse.wavepicking.repository.OrderRepository;
 import com.warehouse.wavepicking.repository.WaveRepository;
+import com.warehouse.wavepicking.statemachine.StateTransitionResult;
+import com.warehouse.wavepicking.statemachine.WaveStateMachine;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -130,9 +132,8 @@ public class WaveService {
         Wave wave = waveRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("WAVE_NOT_FOUND", "波次不存在: " + id));
 
-        if (wave.getStatus() != Wave.WaveStatus.NEW) {
-            throw new BusinessException("INVALID_STATUS", "只有新建状态的波次才能释放");
-        }
+        StateTransitionResult result = WaveStateMachine.canRelease(wave.getStatus());
+        throwIfNotAllowed(result);
 
         List<Order> orders = orderRepository.findByWaveId(wave.getId());
         if (orders.isEmpty()) {
@@ -171,9 +172,8 @@ public class WaveService {
         Wave wave = waveRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("WAVE_NOT_FOUND", "波次不存在: " + id));
 
-        if (wave.getStatus() != Wave.WaveStatus.RELEASED && wave.getStatus() != Wave.WaveStatus.PICKING) {
-            throw new BusinessException("INVALID_STATUS", "只有已释放或拣货中的波次才能回滚");
-        }
+        StateTransitionResult result = WaveStateMachine.canRollback(wave.getStatus());
+        throwIfNotAllowed(result);
 
         List<Order> orders = orderRepository.findByWaveId(wave.getId());
 
@@ -208,17 +208,11 @@ public class WaveService {
         Wave wave = waveRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("WAVE_NOT_FOUND", "波次不存在: " + id));
 
-        if (wave.getStatus() != Wave.WaveStatus.PICKING) {
-            throw new BusinessException("INVALID_STATUS", "只有拣货中的波次才能完成");
-        }
-
         long completedTasks = pickingTaskService.countCompletedTasksByWave(wave.getId());
         long totalTasks = pickingTaskService.countTotalTasksByWave(wave.getId());
 
-        if (completedTasks < totalTasks) {
-            throw new BusinessException("TASKS_NOT_COMPLETED",
-                    "拣货任务未全部完成，已完成: " + completedTasks + "，总计: " + totalTasks);
-        }
+        StateTransitionResult result = WaveStateMachine.canComplete(wave.getStatus(), completedTasks, totalTasks);
+        throwIfNotAllowed(result);
 
         List<Order> orders = orderRepository.findByWaveId(wave.getId());
         for (Order order : orders) {
@@ -240,17 +234,25 @@ public class WaveService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "订单不存在: " + orderId));
 
-        if (order.getStatus() != Order.OrderStatus.CONFIRMED || order.getWave() != null) {
-            throw new BusinessException("INVALID_ORDER", "订单状态不满足紧急插单条件");
-        }
+        WaveStateMachine.OrderStatusCheck orderCheck = new WaveStateMachine.OrderStatusCheck() {
+            @Override
+            public boolean isConfirmed() {
+                return order.getStatus() == Order.OrderStatus.CONFIRMED;
+            }
 
-        if (!Boolean.TRUE.equals(order.getUrgent())) {
-            throw new BusinessException("NOT_URGENT", "只有紧急订单才能插入正在进行的波次");
-        }
+            @Override
+            public boolean hasWave() {
+                return order.getWave() != null;
+            }
 
-        if (wave.getStatus() == Wave.WaveStatus.COMPLETED || wave.getStatus() == Wave.WaveStatus.CANCELLED) {
-            throw new BusinessException("INVALID_STATUS", "波次已完成或已取消，无法插入订单");
-        }
+            @Override
+            public boolean isUrgent() {
+                return Boolean.TRUE.equals(order.getUrgent());
+            }
+        };
+
+        StateTransitionResult result = WaveStateMachine.canAddUrgentOrder(wave.getStatus(), orderCheck);
+        throwIfNotAllowed(result);
 
         for (OrderItem item : order.getItems()) {
             inventoryService.lockStock(item.getSku().getId(), item.getQuantity());
@@ -267,6 +269,12 @@ public class WaveService {
         waveRepository.save(wave);
 
         return convertToResponse(wave);
+    }
+
+    private void throwIfNotAllowed(StateTransitionResult result) {
+        if (!result.isAllowed()) {
+            throw new BusinessException(result.getErrorCode(), result.getErrorMessage());
+        }
     }
 
     private String generateWaveNo() {

@@ -9,6 +9,8 @@ import com.warehouse.wavepicking.entity.Sku;
 import com.warehouse.wavepicking.exception.BusinessException;
 import com.warehouse.wavepicking.repository.OrderRepository;
 import com.warehouse.wavepicking.repository.SkuRepository;
+import com.warehouse.wavepicking.statemachine.OrderStateMachine;
+import com.warehouse.wavepicking.statemachine.StateTransitionResult;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -135,9 +137,8 @@ public class OrderService implements IOrderService {
             return convertToResponse(order);
         }
 
-        if (order.getStatus() != Order.OrderStatus.PENDING) {
-            throw new BusinessException("INVALID_STATUS", "只有待确认订单才能确认");
-        }
+        StateTransitionResult result = OrderStateMachine.canConfirm(order.getStatus());
+        throwIfNotAllowed(result);
 
         inventoryLockService.lockStockForOrder(order);
 
@@ -151,11 +152,8 @@ public class OrderService implements IOrderService {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "订单不存在: " + id));
 
-        Order.OrderStatus currentStatus = order.getStatus();
-        if (!currentStatus.canTransitionTo(targetStatus)) {
-            throw new BusinessException("INVALID_STATUS_TRANSITION",
-                    currentStatus.getTransitionErrorMessage(targetStatus));
-        }
+        StateTransitionResult result = OrderStateMachine.canTransition(order.getStatus(), targetStatus);
+        throwIfNotAllowed(result);
 
         order.setStatus(targetStatus);
 
@@ -173,15 +171,9 @@ public class OrderService implements IOrderService {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "订单不存在: " + id));
 
-        Order.OrderStatus currentStatus = order.getStatus();
-        if (!currentStatus.canTransitionTo(Order.OrderStatus.CANCELLED)) {
-            throw new BusinessException("CANNOT_CANCEL",
-                    currentStatus.getTransitionErrorMessage(Order.OrderStatus.CANCELLED));
-        }
-
-        if (order.getWave() != null) {
-            throw new BusinessException("CANNOT_CANCEL", "订单已在波次中，无法取消，请先回滚波次");
-        }
+        boolean hasWave = order.getWave() != null;
+        StateTransitionResult result = OrderStateMachine.canCancel(order.getStatus(), hasWave);
+        throwIfNotAllowed(result);
 
         inventoryLockService.releaseStockForCancelledOrder(order);
 
@@ -192,11 +184,8 @@ public class OrderService implements IOrderService {
 
     @Transactional
     public void allocateOrderToWave(Order order, com.warehouse.wavepicking.entity.Wave wave) {
-        Order.OrderStatus currentStatus = order.getStatus();
-        if (!currentStatus.canTransitionTo(Order.OrderStatus.ALLOCATED)) {
-            throw new BusinessException("INVALID_STATUS_TRANSITION",
-                    currentStatus.getTransitionErrorMessage(Order.OrderStatus.ALLOCATED));
-        }
+        StateTransitionResult result = OrderStateMachine.canAllocateToWave(order.getStatus());
+        throwIfNotAllowed(result);
         order.setWave(wave);
         order.setStatus(Order.OrderStatus.ALLOCATED);
         orderRepository.save(order);
@@ -204,14 +193,17 @@ public class OrderService implements IOrderService {
 
     @Transactional
     public void rollbackOrderFromWave(Order order) {
-        Order.OrderStatus currentStatus = order.getStatus();
-        if (!currentStatus.canTransitionTo(Order.OrderStatus.CONFIRMED)) {
-            throw new BusinessException("INVALID_STATUS_TRANSITION",
-                    currentStatus.getTransitionErrorMessage(Order.OrderStatus.CONFIRMED));
-        }
+        StateTransitionResult result = OrderStateMachine.canRollbackFromWave(order.getStatus());
+        throwIfNotAllowed(result);
         order.setWave(null);
         order.setStatus(Order.OrderStatus.CONFIRMED);
         orderRepository.save(order);
+    }
+
+    private void throwIfNotAllowed(StateTransitionResult result) {
+        if (!result.isAllowed()) {
+            throw new BusinessException(result.getErrorCode(), result.getErrorMessage());
+        }
     }
 
     private String generateOrderNo() {
