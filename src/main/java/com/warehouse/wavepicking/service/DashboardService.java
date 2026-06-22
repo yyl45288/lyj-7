@@ -22,9 +22,9 @@ public class DashboardService {
     private final PickingTaskRepository pickingTaskRepository;
     private final InventoryRepository inventoryRepository;
     private final SkuRepository skuRepository;
-    private final InventoryService inventoryService;
+    private final IInventoryService inventoryService;
 
-    public DashboardService(OrderRepository orderRepository, WaveRepository waveRepository, PickingTaskRepository pickingTaskRepository, InventoryRepository inventoryRepository, SkuRepository skuRepository, InventoryService inventoryService) {
+    public DashboardService(OrderRepository orderRepository, WaveRepository waveRepository, PickingTaskRepository pickingTaskRepository, InventoryRepository inventoryRepository, SkuRepository skuRepository, IInventoryService inventoryService) {
         this.orderRepository = orderRepository;
         this.waveRepository = waveRepository;
         this.pickingTaskRepository = pickingTaskRepository;

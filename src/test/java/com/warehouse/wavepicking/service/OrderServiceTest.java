@@ -36,7 +36,7 @@ class OrderServiceTest {
     private SkuRepository skuRepository;
 
     @Mock
-    private InventoryService inventoryService;
+    private IInventoryLockService inventoryLockService;
 
     @InjectMocks
     private OrderService orderService;
@@ -180,13 +180,12 @@ class OrderServiceTest {
     @DisplayName("确认订单 - 成功")
     void testConfirmOrder_Success() {
         when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
-        when(inventoryService.hasEnoughStock(1L, 5)).thenReturn(true);
-        when(inventoryService.hasEnoughStock(2L, 3)).thenReturn(true);
         when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
 
         OrderResponse result = orderService.confirmOrder(1L);
 
         assertNotNull(result);
+        verify(inventoryLockService).lockStockForOrder(testOrder);
         verify(orderRepository).save(testOrder);
     }
 
@@ -213,6 +212,7 @@ class OrderServiceTest {
 
         assertNotNull(result);
         assertEquals(Order.OrderStatus.CANCELLED, testOrder.getStatus());
+        verify(inventoryLockService).releaseStockForCancelledOrder(testOrder);
     }
 
     @Test
@@ -322,6 +322,7 @@ class OrderServiceTest {
         assertNotNull(result);
         assertEquals(Order.OrderStatus.SHIPPED, testOrder.getStatus());
         assertNotNull(testOrder.getCompletedAt());
+        verify(inventoryLockService).deductStockForShippedOrder(testOrder);
         verify(orderRepository).save(testOrder);
     }
 

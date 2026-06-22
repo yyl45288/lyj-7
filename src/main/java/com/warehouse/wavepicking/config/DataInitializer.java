@@ -8,6 +8,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,6 +19,7 @@ public class DataInitializer implements CommandLineRunner {
 
     private final SkuRepository skuRepository;
     private final InventoryRepository inventoryRepository;
+    private final InventoryBatchRepository inventoryBatchRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final WaveRepository waveRepository;
@@ -25,12 +27,14 @@ public class DataInitializer implements CommandLineRunner {
 
     public DataInitializer(SkuRepository skuRepository,
                            InventoryRepository inventoryRepository,
+                           InventoryBatchRepository inventoryBatchRepository,
                            OrderRepository orderRepository,
                            OrderItemRepository orderItemRepository,
                            WaveRepository waveRepository,
                            PickingTaskRepository pickingTaskRepository) {
         this.skuRepository = skuRepository;
         this.inventoryRepository = inventoryRepository;
+        this.inventoryBatchRepository = inventoryBatchRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.waveRepository = waveRepository;
@@ -49,6 +53,7 @@ public class DataInitializer implements CommandLineRunner {
 
         List<Sku> skus = createSkus();
         createInventories(skus);
+        createInventoryBatches(skus);
         createSampleOrders(skus);
 
         log.info("数据初始化完成");
@@ -91,6 +96,37 @@ public class DataInitializer implements CommandLineRunner {
         }
 
         log.info("创建了 {} 个库存记录", skus.size());
+    }
+
+    private void createInventoryBatches(List<Sku> skus) {
+        int[] quantities = {100, 50, 200, 80, 150, 30, 120, 60, 90, 5,
+                8, 200, 75, 15, 180, 40, 110, 3, 65, 12};
+        LocalDateTime now = LocalDateTime.now();
+
+        for (int i = 0; i < skus.size(); i++) {
+            Sku sku = skus.get(i);
+            int qty = quantities[i % quantities.length];
+
+            InventoryBatch batch1 = new InventoryBatch();
+            batch1.setSku(sku);
+            batch1.setBatchNo("B" + String.format("%04d", i * 2 + 1));
+            batch1.setTotalQuantity(qty * 2 / 3);
+            batch1.setAvailableQuantity(qty * 2 / 3);
+            batch1.setLockedQuantity(0);
+            batch1.setExpiryDate(now.plusDays(30 + i * 3));
+            inventoryBatchRepository.save(batch1);
+
+            InventoryBatch batch2 = new InventoryBatch();
+            batch2.setSku(sku);
+            batch2.setBatchNo("B" + String.format("%04d", i * 2 + 2));
+            batch2.setTotalQuantity(qty - qty * 2 / 3);
+            batch2.setAvailableQuantity(qty - qty * 2 / 3);
+            batch2.setLockedQuantity(0);
+            batch2.setExpiryDate(now.plusDays(90 + i * 5));
+            inventoryBatchRepository.save(batch2);
+        }
+
+        log.info("创建了库存批次记录");
     }
 
     private void createSampleOrders(List<Sku> skus) {

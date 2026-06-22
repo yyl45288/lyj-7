@@ -39,13 +39,13 @@ class WaveServiceTest {
     private OrderItemRepository orderItemRepository;
 
     @Mock
-    private InventoryService inventoryService;
+    private IInventoryService inventoryService;
 
     @Mock
-    private OrderService orderService;
+    private IOrderService orderService;
 
     @Mock
-    private PickingTaskService pickingTaskService;
+    private IPickingTaskService pickingTaskService;
 
     @InjectMocks
     private WaveService waveService;

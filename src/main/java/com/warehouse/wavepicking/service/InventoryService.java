@@ -1,25 +1,35 @@
 package com.warehouse.wavepicking.service;
 
 import com.warehouse.wavepicking.dto.response.InventoryResponse;
-import com.warehouse.wavepicking.entity.Inventory;
-import com.warehouse.wavepicking.entity.Sku;
+import com.warehouse.wavepicking.entity.*;
+import com.warehouse.wavepicking.entity.InventoryLock.LockStatus;
 import com.warehouse.wavepicking.exception.BusinessException;
+import com.warehouse.wavepicking.repository.InventoryBatchRepository;
+import com.warehouse.wavepicking.repository.InventoryLockRepository;
 import com.warehouse.wavepicking.repository.InventoryRepository;
 import com.warehouse.wavepicking.repository.SkuRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-public class InventoryService {
+public class InventoryService implements IInventoryService {
 
     private final InventoryRepository inventoryRepository;
+    private final InventoryBatchRepository inventoryBatchRepository;
+    private final InventoryLockRepository inventoryLockRepository;
     private final SkuRepository skuRepository;
 
-    public InventoryService(InventoryRepository inventoryRepository, SkuRepository skuRepository) {
+    public InventoryService(InventoryRepository inventoryRepository,
+                            InventoryBatchRepository inventoryBatchRepository,
+                            InventoryLockRepository inventoryLockRepository,
+                            SkuRepository skuRepository) {
         this.inventoryRepository = inventoryRepository;
+        this.inventoryBatchRepository = inventoryBatchRepository;
+        this.inventoryLockRepository = inventoryLockRepository;
         this.skuRepository = skuRepository;
     }
 
@@ -140,9 +150,210 @@ public class InventoryService {
     }
 
     public boolean hasEnoughStock(Long skuId, Integer quantity) {
-        Inventory inventory = inventoryRepository.findBySkuId(skuId)
-                .orElseThrow(() -> new BusinessException("INVENTORY_NOT_FOUND", "库存不存在，SKU ID: " + skuId));
-        return inventory.hasEnoughStock(quantity);
+        List<InventoryBatch> batches = inventoryBatchRepository
+                .findAvailableBatchesBySkuIdOrderByExpiryDate(skuId);
+        int totalAvailable = batches.stream()
+                .mapToInt(InventoryBatch::getAvailableQuantity)
+                .sum();
+        return totalAvailable >= quantity;
+    }
+
+    @Transactional
+    public List<InventoryLock> lockStockForOrder(Order order) {
+        List<InventoryLock> createdLocks = new ArrayList<>();
+
+        try {
+            for (OrderItem item : order.getItems()) {
+                Long skuId = item.getSku().getId();
+                int requiredQty = item.getQuantity();
+
+                List<InventoryBatch> availableBatches = inventoryBatchRepository
+                        .findAvailableBatchesBySkuIdOrderByExpiryDate(skuId);
+
+                int totalAvailable = availableBatches.stream()
+                        .mapToInt(InventoryBatch::getAvailableQuantity)
+                        .sum();
+
+                if (totalAvailable < requiredQty) {
+                    throw new BusinessException("INSUFFICIENT_STOCK",
+                            "库存不足，无法锁定。SKU: " + item.getSku().getSkuCode() +
+                                    "，需要: " + requiredQty +
+                                    "，可用: " + totalAvailable);
+                }
+
+                int remaining = requiredQty;
+                for (InventoryBatch batch : availableBatches) {
+                    if (remaining <= 0) break;
+
+                    InventoryBatch lockedBatch = inventoryBatchRepository.findByIdWithLock(batch.getId());
+                    if (lockedBatch.isExpired() || lockedBatch.getAvailableQuantity() <= 0) {
+                        continue;
+                    }
+
+                    int lockQty = Math.min(remaining, lockedBatch.getAvailableQuantity());
+
+                    lockedBatch.setAvailableQuantity(lockedBatch.getAvailableQuantity() - lockQty);
+                    lockedBatch.setLockedQuantity(lockedBatch.getLockedQuantity() + lockQty);
+                    inventoryBatchRepository.save(lockedBatch);
+
+                    InventoryLock lock = new InventoryLock();
+                    lock.setOrder(order);
+                    lock.setBatch(lockedBatch);
+                    lock.setLockedQuantity(lockQty);
+                    lock.setStatus(LockStatus.LOCKED);
+                    inventoryLockRepository.save(lock);
+
+                    createdLocks.add(lock);
+                    remaining -= lockQty;
+                }
+
+                if (remaining > 0) {
+                    throw new BusinessException("INSUFFICIENT_STOCK",
+                            "库存不足，无法锁定。SKU: " + item.getSku().getSkuCode() +
+                                    "，仍需: " + remaining);
+                }
+
+                Inventory inventory = inventoryRepository.findBySkuIdWithLock(skuId)
+                        .orElseThrow(() -> new BusinessException("INVENTORY_NOT_FOUND", "库存不存在，SKU ID: " + skuId));
+                inventory.setAvailableQuantity(inventory.getAvailableQuantity() - requiredQty);
+                inventory.setLockedQuantity(inventory.getLockedQuantity() + requiredQty);
+                inventoryRepository.save(inventory);
+            }
+            return createdLocks;
+        } catch (BusinessException e) {
+            rollbackLocks(createdLocks);
+            throw e;
+        } catch (Exception e) {
+            rollbackLocks(createdLocks);
+            throw new BusinessException("LOCK_FAILED", "库存锁定失败: " + e.getMessage());
+        }
+    }
+
+    private void rollbackLocks(List<InventoryLock> locks) {
+        for (InventoryLock lock : locks) {
+            try {
+                InventoryBatch batch = inventoryBatchRepository.findByIdWithLock(lock.getBatch().getId());
+                if (batch != null) {
+                    batch.setAvailableQuantity(batch.getAvailableQuantity() + lock.getLockedQuantity());
+                    batch.setLockedQuantity(batch.getLockedQuantity() - lock.getLockedQuantity());
+                    inventoryBatchRepository.save(batch);
+                }
+                inventoryLockRepository.delete(lock);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    @Transactional
+    public void releaseStockForOrder(Order order) {
+        List<InventoryLock> locks = inventoryLockRepository.findByOrderIdAndStatus(
+                order.getId(), LockStatus.LOCKED);
+
+        if (locks.isEmpty()) {
+            return;
+        }
+
+        Order.OrderStatus orderStatus = order.getStatus();
+        boolean isShipped = orderStatus == Order.OrderStatus.SHIPPED;
+        boolean isPostAllocation = orderStatus == Order.OrderStatus.PICKING
+                || orderStatus == Order.OrderStatus.PICKED
+                || orderStatus == Order.OrderStatus.PACKED
+                || orderStatus == Order.OrderStatus.SHIPPED;
+
+        Map<Long, Integer> skuQtyMap = new LinkedHashMap<>();
+
+        for (InventoryLock lock : locks) {
+            InventoryBatch batch = inventoryBatchRepository.findByIdWithLock(lock.getBatch().getId());
+
+            if (isShipped) {
+                batch.setLockedQuantity(batch.getLockedQuantity() - lock.getLockedQuantity());
+                batch.setTotalQuantity(batch.getTotalQuantity() - lock.getLockedQuantity());
+            } else {
+                batch.setAvailableQuantity(batch.getAvailableQuantity() + lock.getLockedQuantity());
+                batch.setLockedQuantity(batch.getLockedQuantity() - lock.getLockedQuantity());
+            }
+
+            inventoryBatchRepository.save(batch);
+
+            Long skuId = batch.getSku().getId();
+            skuQtyMap.merge(skuId, lock.getLockedQuantity(), Integer::sum);
+
+            lock.setStatus(isShipped ? LockStatus.DEDUCTED : LockStatus.RELEASED);
+            inventoryLockRepository.save(lock);
+        }
+
+        for (Map.Entry<Long, Integer> entry : skuQtyMap.entrySet()) {
+            Long skuId = entry.getKey();
+            Integer qty = entry.getValue();
+            Inventory inventory = inventoryRepository.findBySkuIdWithLock(skuId)
+                    .orElseThrow(() -> new BusinessException("INVENTORY_NOT_FOUND", "库存不存在，SKU ID: " + skuId));
+
+            if (isShipped) {
+                inventory.setLockedQuantity(inventory.getLockedQuantity() - qty);
+                inventory.setTotalQuantity(inventory.getTotalQuantity() - qty);
+            } else {
+                inventory.setAvailableQuantity(inventory.getAvailableQuantity() + qty);
+                inventory.setLockedQuantity(inventory.getLockedQuantity() - qty);
+            }
+
+            inventoryRepository.save(inventory);
+        }
+    }
+
+    @Transactional
+    public void deductStockForShippedOrder(Order order) {
+        List<InventoryLock> locks = inventoryLockRepository.findByOrderIdAndStatus(
+                order.getId(), LockStatus.LOCKED);
+
+        if (locks.isEmpty()) {
+            return;
+        }
+
+        Map<Long, Integer> skuQtyMap = new LinkedHashMap<>();
+
+        for (InventoryLock lock : locks) {
+            InventoryBatch batch = inventoryBatchRepository.findByIdWithLock(lock.getBatch().getId());
+            batch.setLockedQuantity(batch.getLockedQuantity() - lock.getLockedQuantity());
+            batch.setTotalQuantity(batch.getTotalQuantity() - lock.getLockedQuantity());
+            inventoryBatchRepository.save(batch);
+
+            Long skuId = batch.getSku().getId();
+            skuQtyMap.merge(skuId, lock.getLockedQuantity(), Integer::sum);
+
+            lock.setStatus(LockStatus.DEDUCTED);
+            inventoryLockRepository.save(lock);
+        }
+
+        for (Map.Entry<Long, Integer> entry : skuQtyMap.entrySet()) {
+            Long skuId = entry.getKey();
+            Integer qty = entry.getValue();
+            Inventory inventory = inventoryRepository.findBySkuIdWithLock(skuId)
+                    .orElseThrow(() -> new BusinessException("INVENTORY_NOT_FOUND", "库存不存在，SKU ID: " + skuId));
+
+            inventory.setLockedQuantity(inventory.getLockedQuantity() - qty);
+            inventory.setTotalQuantity(inventory.getTotalQuantity() - qty);
+            inventoryRepository.save(inventory);
+        }
+    }
+
+    @Transactional
+    public InventoryBatch createBatch(Long skuId, String batchNo, Integer quantity, LocalDateTime expiryDate) {
+        Sku sku = skuRepository.findById(skuId)
+                .orElseThrow(() -> new BusinessException("SKU_NOT_FOUND", "SKU不存在: " + skuId));
+
+        InventoryBatch batch = new InventoryBatch();
+        batch.setSku(sku);
+        batch.setBatchNo(batchNo);
+        batch.setTotalQuantity(quantity);
+        batch.setAvailableQuantity(quantity);
+        batch.setLockedQuantity(0);
+        batch.setExpiryDate(expiryDate);
+
+        return inventoryBatchRepository.save(batch);
+    }
+
+    public List<InventoryBatch> getBatchesBySkuId(Long skuId) {
+        return inventoryBatchRepository.findBySkuIdOrderByExpiryDate(skuId);
     }
 
     private InventoryResponse convertToResponse(Inventory inventory) {

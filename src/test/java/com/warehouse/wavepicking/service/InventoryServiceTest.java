@@ -2,8 +2,11 @@ package com.warehouse.wavepicking.service;
 
 import com.warehouse.wavepicking.dto.response.InventoryResponse;
 import com.warehouse.wavepicking.entity.Inventory;
+import com.warehouse.wavepicking.entity.InventoryBatch;
 import com.warehouse.wavepicking.entity.Sku;
 import com.warehouse.wavepicking.exception.BusinessException;
+import com.warehouse.wavepicking.repository.InventoryBatchRepository;
+import com.warehouse.wavepicking.repository.InventoryLockRepository;
 import com.warehouse.wavepicking.repository.InventoryRepository;
 import com.warehouse.wavepicking.repository.SkuRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,6 +33,12 @@ class InventoryServiceTest {
 
     @Mock
     private InventoryRepository inventoryRepository;
+
+    @Mock
+    private InventoryBatchRepository inventoryBatchRepository;
+
+    @Mock
+    private InventoryLockRepository inventoryLockRepository;
 
     @Mock
     private SkuRepository skuRepository;
@@ -145,9 +155,15 @@ class InventoryServiceTest {
     }
 
     @Test
-    @DisplayName("检查库存是否充足 - 充足")
+    @DisplayName("检查库存是否充足 - 充足（基于批次）")
     void testHasEnoughStock_True() {
-        when(inventoryRepository.findBySkuId(1L)).thenReturn(Optional.of(testInventory));
+        InventoryBatch batch = new InventoryBatch();
+        batch.setId(1L);
+        batch.setAvailableQuantity(100);
+        batch.setExpiryDate(LocalDateTime.now().plusDays(30));
+
+        when(inventoryBatchRepository.findAvailableBatchesBySkuIdOrderByExpiryDate(1L))
+                .thenReturn(Collections.singletonList(batch));
 
         boolean result = inventoryService.hasEnoughStock(1L, 50);
 
@@ -155,9 +171,15 @@ class InventoryServiceTest {
     }
 
     @Test
-    @DisplayName("检查库存是否充足 - 不足")
+    @DisplayName("检查库存是否充足 - 不足（基于批次）")
     void testHasEnoughStock_False() {
-        when(inventoryRepository.findBySkuId(1L)).thenReturn(Optional.of(testInventory));
+        InventoryBatch batch = new InventoryBatch();
+        batch.setId(1L);
+        batch.setAvailableQuantity(5);
+        batch.setExpiryDate(LocalDateTime.now().plusDays(30));
+
+        when(inventoryBatchRepository.findAvailableBatchesBySkuIdOrderByExpiryDate(1L))
+                .thenReturn(Collections.singletonList(batch));
 
         boolean result = inventoryService.hasEnoughStock(1L, 200);
 
@@ -192,5 +214,32 @@ class InventoryServiceTest {
         assertNotNull(result);
         assertEquals(150, testInventory.getTotalQuantity());
         assertEquals(150, testInventory.getAvailableQuantity());
+    }
+
+    @Test
+    @DisplayName("扣减锁定库存 - 成功")
+    void testDeductLockedStock_Success() {
+        testInventory.setLockedQuantity(30);
+
+        when(inventoryRepository.findBySkuIdWithLock(1L)).thenReturn(Optional.of(testInventory));
+        when(inventoryRepository.save(any(Inventory.class))).thenReturn(testInventory);
+
+        assertDoesNotThrow(() -> inventoryService.deductLockedStock(1L, 20));
+
+        assertEquals(10, testInventory.getLockedQuantity());
+        assertEquals(80, testInventory.getTotalQuantity());
+    }
+
+    @Test
+    @DisplayName("扣减锁定库存 - 锁定量不足")
+    void testDeductLockedStock_Insufficient() {
+        testInventory.setLockedQuantity(10);
+
+        when(inventoryRepository.findBySkuIdWithLock(1L)).thenReturn(Optional.of(testInventory));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> inventoryService.deductLockedStock(1L, 20));
+
+        assertEquals("DEDUCT_ERROR", exception.getCode());
     }
 }

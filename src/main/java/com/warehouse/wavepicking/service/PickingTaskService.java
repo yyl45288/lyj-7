@@ -14,12 +14,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Service
-public class PickingTaskService {
+public class PickingTaskService implements IPickingTaskService {
 
     private final PickingTaskRepository pickingTaskRepository;
-    private final InventoryService inventoryService;
+    private final IInventoryService inventoryService;
 
-    public PickingTaskService(PickingTaskRepository pickingTaskRepository, InventoryService inventoryService) {
+    public PickingTaskService(PickingTaskRepository pickingTaskRepository, IInventoryService inventoryService) {
         this.pickingTaskRepository = pickingTaskRepository;
         this.inventoryService = inventoryService;
     }

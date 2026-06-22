@@ -24,11 +24,11 @@ public class WaveService {
     private final WaveRepository waveRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
-    private final InventoryService inventoryService;
-    private final OrderService orderService;
-    private final PickingTaskService pickingTaskService;
+    private final IInventoryService inventoryService;
+    private final IOrderService orderService;
+    private final IPickingTaskService pickingTaskService;
 
-    public WaveService(WaveRepository waveRepository, OrderRepository orderRepository, OrderItemRepository orderItemRepository, InventoryService inventoryService, OrderService orderService, PickingTaskService pickingTaskService) {
+    public WaveService(WaveRepository waveRepository, OrderRepository orderRepository, OrderItemRepository orderItemRepository, IInventoryService inventoryService, IOrderService orderService, IPickingTaskService pickingTaskService) {
         this.waveRepository = waveRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;

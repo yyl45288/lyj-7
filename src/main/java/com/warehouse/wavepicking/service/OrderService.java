@@ -19,16 +19,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Service
-public class OrderService {
+public class OrderService implements IOrderService {
 
     private final OrderRepository orderRepository;
     private final SkuRepository skuRepository;
-    private final InventoryService inventoryService;
+    private final IInventoryLockService inventoryLockService;
 
-    public OrderService(OrderRepository orderRepository, SkuRepository skuRepository, InventoryService inventoryService) {
+    public OrderService(OrderRepository orderRepository,
+                        SkuRepository skuRepository,
+                        IInventoryLockService inventoryLockService) {
         this.orderRepository = orderRepository;
         this.skuRepository = skuRepository;
-        this.inventoryService = inventoryService;
+        this.inventoryLockService = inventoryLockService;
     }
 
     private static final AtomicInteger orderCounter = new AtomicInteger(0);
@@ -127,12 +129,7 @@ public class OrderService {
             throw new BusinessException("INVALID_STATUS", "只有待确认订单才能确认");
         }
 
-        for (OrderItem item : order.getItems()) {
-            if (!inventoryService.hasEnoughStock(item.getSku().getId(), item.getQuantity())) {
-                throw new BusinessException("INSUFFICIENT_STOCK",
-                        "库存不足，无法确认订单。SKU: " + item.getSku().getSkuCode());
-            }
-        }
+        inventoryLockService.lockStockForOrder(order);
 
         order.setStatus(Order.OrderStatus.CONFIRMED);
         Order saved = orderRepository.save(order);
@@ -154,6 +151,7 @@ public class OrderService {
 
         if (targetStatus == Order.OrderStatus.SHIPPED) {
             order.setCompletedAt(LocalDateTime.now());
+            inventoryLockService.deductStockForShippedOrder(order);
         }
 
         Order saved = orderRepository.save(order);
@@ -173,6 +171,12 @@ public class OrderService {
 
         if (order.getWave() != null) {
             throw new BusinessException("CANNOT_CANCEL", "订单已在波次中，无法取消，请先回滚波次");
+        }
+
+        if (currentStatus == Order.OrderStatus.PENDING) {
+            // no inventory locked yet
+        } else {
+            inventoryLockService.releaseStockForCancelledOrder(order);
         }
 
         order.setStatus(Order.OrderStatus.CANCELLED);
